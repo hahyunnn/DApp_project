@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>도서 대여 DApp</title>
+  <meta charset="utf-8">
+  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    .book { margin: 10px 0; padding: 10px; border: 1px solid #ccc; }
+    button { margin-left: 10px; }
+    table { margin-top: 20px; border-collapse: collapse; width: 100%; }
+    th, td { padding: 8px; border: 1px solid #ccc; text-align: left; }
+  </style>
+</head>
+<body>
+  <h2>📚 도서 대여 시스템</h2>
+
+  <div id="adminControls" style="display:none; margin-bottom:20px;">
+    <h3>📘 도서 등록 (관리자 전용)</h3>
+    <input type="text" id="bookTitle" placeholder="도서 제목 입력" />
+    <button onclick="addBook()">도서 추가</button>
+  </div>
+
+  <div id="bookList">로딩 중...</div>
+
+  <h3>📜 대여 기록</h3>
+  <table id="history" border="1" cellpadding="5">
+    <thead>
+      <tr><th>대여자</th><th>책 번호</th><th>제목</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const contractAddress = "0x65b1A7A9662CE572A785B9ecf240f917717f5eD4";
+    const contractABI = [
+	{
+		"inputs": [
+			{
+				"internalType": "string",
+				"name": "_title",
+				"type": "string"
+			}
+		],
+		"name": "addBook",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"stateMutability": "nonpayable",
+		"type": "constructor"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "uint256",
+				"name": "bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "BookRemoved",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "user",
+				"type": "address"
+			},
+			{
+				"indexed": true,
+				"internalType": "uint256",
+				"name": "bookId",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "string",
+				"name": "title",
+				"type": "string"
+			}
+		],
+		"name": "BookRented",
+		"type": "event"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "address",
+				"name": "user",
+				"type": "address"
+			},
+			{
+				"indexed": true,
+				"internalType": "uint256",
+				"name": "bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "BookReturned",
+		"type": "event"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "removeBook",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "rentBook",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "returnBook",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "admin",
+		"outputs": [
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [],
+		"name": "bookCount",
+		"outputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "",
+				"type": "uint256"
+			}
+		],
+		"name": "books",
+		"outputs": [
+			{
+				"internalType": "string",
+				"name": "title",
+				"type": "string"
+			},
+			{
+				"internalType": "bool",
+				"name": "isAvailable",
+				"type": "bool"
+			},
+			{
+				"internalType": "address",
+				"name": "borrower",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_bookId",
+				"type": "uint256"
+			}
+		],
+		"name": "getBook",
+		"outputs": [
+			{
+				"internalType": "string",
+				"name": "",
+				"type": "string"
+			},
+			{
+				"internalType": "bool",
+				"name": "",
+				"type": "bool"
+			},
+			{
+				"internalType": "address",
+				"name": "",
+				"type": "address"
+			}
+		],
+		"stateMutability": "view",
+		"type": "function"
+	}
+];
+
+    let provider, signer, contract, userAddress;
+    let isAdmin = false;
+
+    async function init() {
+      if (!window.ethereum) return alert("Metamask 설치 필요");
+      await ethereum.request({ method: "eth_requestAccounts" });
+      await setup();
+
+      window.ethereum.on("accountsChanged", async () => {
+        await setup();
+      });
+    }
+
+    async function setup() {
+      provider = new ethers.providers.Web3Provider(window.ethereum);
+      signer = provider.getSigner();
+      userAddress = await signer.getAddress();
+      contract = new ethers.Contract(contractAddress, contractABI, signer);
+
+      const adminAddr = await contract.admin();
+      isAdmin = adminAddr.toLowerCase() === userAddress.toLowerCase();
+      document.getElementById("adminControls").style.display = isAdmin ? "block" : "none";
+
+      loadBooks();
+      loadRentalHistory();
+    }
+
+    async function loadBooks() {
+      const count = await contract.bookCount();
+      const listDiv = document.getElementById("bookList");
+      listDiv.innerHTML = "";
+
+      for (let i = 0; i < count; i++) {
+        const [title, isAvailable, borrower] = await contract.getBook(i);
+        const div = document.createElement("div");
+        div.className = "book";
+
+        if (title === "deleted") {
+          div.innerHTML = `
+            <b style="color:gray;">삭제된 도서</b><br>
+            <span style="color:red;">사용할 수 없는 도서입니다.</span>
+          `;
+          listDiv.appendChild(div);
+          continue;
+        }
+
+        div.innerHTML = `
+          <b>${title}</b><br>
+          상황: ${isAvailable ? "대여 가능" : `대여 중 by ${shortAddr(borrower)}`}
+          <button onclick="${isAvailable ? `rentBook(${i})` : `returnBook(${i})`}"
+            ${!isAvailable && borrower.toLowerCase() !== userAddress.toLowerCase() ? "disabled" : ""}>
+            ${isAvailable ? "대여" : "반납"}
+          </button>
+          ${isAdmin ? `<button onclick="removeBook(${i})" style="color:red;">삭제</button>` : ""}
+        `;
+        listDiv.appendChild(div);
+      }
+    }
+
+    async function addBook() {
+      const title = document.getElementById("bookTitle").value.trim();
+      if (!title) return alert("도서 제목을 입력하세요.");
+      try {
+        const tx = await contract.addBook(title);
+        await tx.wait();
+        alert("📚 도서가 등록되었습니다.");
+        document.getElementById("bookTitle").value = "";
+        loadBooks();
+      } catch (err) {
+        alert("❌ 등록 실패: " + err.message);
+      }
+    }
+
+    async function rentBook(id) {
+      try {
+        const tx = await contract.rentBook(id);
+        await tx.wait();
+        alert("📦 대여 완료");
+        loadBooks();
+        loadRentalHistory();
+      } catch (err) {
+        alert("❌ 실패: " + err.message);
+      }
+    }
+
+    async function returnBook(id) {
+      try {
+        const tx = await contract.returnBook(id);
+        await tx.wait();
+        alert("📤 반납 완료");
+        loadBooks();
+      } catch (err) {
+        alert("❌ 실패: " + err.message);
+      }
+    }
+
+    async function removeBook(id) {
+      try {
+        const tx = await contract.removeBook(id);
+        await tx.wait();
+        alert("🗑 도서 삭제 완료");
+        loadBooks();
+      } catch (err) {
+        alert("❌ 삭제 실패: " + err.message);
+      }
+    }
+
+    async function loadRentalHistory() {
+      try {
+        const events = await contract.queryFilter("BookRented", 0, "latest");
+        const tbody = document.querySelector("#history tbody");
+        tbody.innerHTML = "";
+
+        for (const e of events) {
+          const { user, bookId, title } = e.args;
+          const tr = document.createElement("tr");
+          tr.innerHTML = `
+            <td>${shortAddr(user)}</td>
+            <td>${bookId.toString()}</td>
+            <td>${title}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+      } catch (err) {
+        console.error("❌ 대여 기록 로드 실패:", err);
+      }
+    }
+
+    function shortAddr(addr) {
+      return addr.slice(0, 6) + "..." + addr.slice(-4);
+    }
+
+    init();
+  </script>
+</body>
+</html>
